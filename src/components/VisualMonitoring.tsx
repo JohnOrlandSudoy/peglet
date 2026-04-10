@@ -16,6 +16,7 @@ export const VisualMonitoring = ({ reading }: VisualMonitoringProps) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const lastFrameRef = useRef<Uint8ClampedArray | null>(null);
+  const isStartingRef = useRef(false);
 
   const [isStarting, setIsStarting] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
@@ -42,26 +43,33 @@ export const VisualMonitoring = ({ reading }: VisualMonitoringProps) => {
   }, []);
 
   const startCamera = useCallback(async () => {
-    if (isStarting) return;
+    if (isStartingRef.current) return;
+    isStartingRef.current = true;
     setIsStarting(true);
     setCameraError(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+        video: {
+          facingMode: 'environment',
+          width: { ideal: 640 },
+          height: { ideal: 360 },
+          frameRate: { ideal: 15, max: 30 }
+        },
         audio: false
       });
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+        await videoRef.current.play().catch(() => undefined);
       }
     } catch (err) {
       setCameraError(err instanceof Error ? err.message : 'Camera permission denied');
       stopCamera();
     } finally {
       setIsStarting(false);
+      isStartingRef.current = false;
     }
-  }, [isStarting, stopCamera]);
+  }, [stopCamera]);
 
   const captureSnapshot = () => {
     const video = videoRef.current;
@@ -180,7 +188,13 @@ export const VisualMonitoring = ({ reading }: VisualMonitoringProps) => {
           </div>
         ) : (
           <div className="rounded-lg overflow-hidden border bg-muted/30">
-            <video ref={videoRef} className="w-full aspect-video object-cover" playsInline muted />
+            <video
+              ref={videoRef}
+              className="w-full aspect-video object-cover"
+              playsInline
+              muted
+              autoPlay
+            />
           </div>
         )}
 
