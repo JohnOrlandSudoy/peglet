@@ -92,3 +92,18 @@ export const updateRelayStatus = async (
     throw error;
   }
 };
+
+export const setSpareRelayCommand = async (value: boolean) => {
+  const { error } = await supabase
+    .from('relay_commands')
+    .upsert({
+      device_id: 'default',
+      spare_relay_on: value,
+      updated_at: new Date().toISOString()
+    });
+
+  if (error) {
+    console.error('Error updating relay command:', error);
+    throw error;
+  }
+};

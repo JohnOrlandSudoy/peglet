@@ -4,7 +4,7 @@ import {
   getLatestReading,
   getRecentReadings,
   subscribeToReadings,
-  updateRelayStatus
+  setSpareRelayCommand
 } from '@/lib/supabase';
 import {
   getCoreTemperatureStatus,
@@ -222,22 +222,13 @@ export const Dashboard = () => {
 
     try {
       const newStatus = !latestReading.spare_relay_status;
-      await updateRelayStatus(latestReading.id, 'spare_relay_status', newStatus);
-
-      setLatestReading({
-        ...latestReading,
-        spare_relay_status: newStatus
-      });
-      latestReadingRef.current = {
-        ...latestReading,
-        spare_relay_status: newStatus
-      };
+      await setSpareRelayCommand(newStatus);
 
       toast.success('Spare Relay Updated', {
-        description: `Relay is now ${newStatus ? 'ON' : 'OFF'}`
+        description: `Requested: ${newStatus ? 'ON' : 'OFF'} (ESP32 will apply on next sync)`
       });
     } catch {
-      toast.error('Failed to update relay status');
+      toast.error('Failed to send spare relay command');
     }
   };
 

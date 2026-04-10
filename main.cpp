@@ -31,6 +31,7 @@ const char* ssid = "piglet";
 const char* password = "1234567890";
 static const char* supabaseHost = "ipaonuxlvyjtfldjdpyb.supabase.co";
 static const char* supabasePath = "/rest/v1/piglet_readings";
+static const char* relayCommandsPath = "/rest/v1/relay_commands?device_id=eq.default&select=spare_relay_on,updated_at";
 const char* supabaseKey =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlwYW9udXhsdnlqdGZsZGpkcHliIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU1ODA3MzcsImV4cCI6MjA5MTE1NjczN30.E9ml7x_qOjAszq_5kkD0JjH6ZHbz86uqmHs8lNOYYOw";
 
@@ -53,6 +54,7 @@ static unsigned long lastSend = 0;
 
 static unsigned long greenLedUntilMs = 0;
 static bool isSending = false;
+static unsigned long nextRelayPollAt = 0;
 
 static unsigned long buzzerUntilMs = 0;
 static unsigned long buzzerNextAllowedAt = 0;
@@ -207,6 +209,73 @@ static bool readLineWithTimeout(WiFiClientSecure& client, String& outLine, unsig
   return false;
 }
 
+static bool httpsGetJson(const char* path, int& statusCodeOut, String& responseBodyOut) {
+  statusCodeOut = 0;
+  responseBodyOut = "";
+
+  WiFiClientSecure client;
+  client.setInsecure();
+  client.setTimeout(8000);
+
+  if (WiFi.status() != WL_CONNECTED) return false;
+
+  IPAddress ip;
+  if (!WiFi.hostByName(supabaseHost, ip)) {
+    return false;
+  }
+
+  if (!client.connect(supabaseHost, 443)) {
+    return false;
+  }
+
+  client.print("GET ");
+  client.print(path);
+  client.println(" HTTP/1.1");
+  client.print("Host: ");
+  client.println(supabaseHost);
+  client.print("apikey: ");
+  client.println(supabaseKey);
+  client.print("Authorization: Bearer ");
+  client.println(supabaseKey);
+  client.println("Accept: application/json");
+  client.println("Connection: close");
+  client.println();
+  client.flush();
+
+  String statusLine;
+  if (!readLineWithTimeout(client, statusLine, 8000)) {
+    client.stop();
+    return false;
+  }
+
+  int firstSpace = statusLine.indexOf(' ');
+  if (firstSpace >= 0 && firstSpace + 1 < (int)statusLine.length()) {
+    statusCodeOut = statusLine.substring(firstSpace + 1).toInt();
+  }
+
+  String line;
+  while (readLineWithTimeout(client, line, 5000)) {
+    if (line.length() == 0) break;
+  }
+
+  unsigned long startBody = millis();
+  while (millis() - startBody < 8000) {
+    while (client.available()) {
+      char ch = (char)client.read();
+      responseBodyOut += ch;
+      if (responseBodyOut.length() > 1500) {
+        client.stop();
+        return true;
+      }
+    }
+    if (!client.connected()) break;
+    delay(1);
+  }
+
+  client.stop();
+  return true;
+}
+
 static bool httpsPostJson(const String& jsonPayload, int& statusCodeOut, String& responseBodyOut) {
   statusCodeOut = 0;
   responseBodyOut = "";
@@ -286,6 +355,27 @@ static bool httpsPostJson(const String& jsonPayload, int& statusCodeOut, String&
 
   client.stop();
   return true;
+}
+
+static void pollRelayCommands() {
+  if ((long)(millis() - nextRelayPollAt) < 0) return;
+  nextRelayPollAt = millis() + 2000;
+
+  int code = 0;
+  String body;
+  bool ok = httpsGetJson(relayCommandsPath, code, body);
+  if (!ok || code < 200 || code >= 300 || body.length() == 0) return;
+
+  StaticJsonDocument<256> doc;
+  DeserializationError err = deserializeJson(doc, body);
+  if (err) return;
+
+  JsonArray arr = doc.as<JsonArray>();
+  if (arr.size() == 0) return;
+  JsonObject obj = arr[0].as<JsonObject>();
+  if (obj.containsKey("spare_relay_on")) {
+    spareOn = obj["spare_relay_on"].as<bool>();
+  }
 }
 
 static void sendToSupabase(bool fanOn, bool pumpOn, bool spareOn, bool heaterOn) {
@@ -403,6 +493,7 @@ void setup() {
 
 void loop() {
   ensureWiFiConnected();
+  pollRelayCommands();
 
   bool wifiConnected = WiFi.status() == WL_CONNECTED;
   digitalWrite(LED_BLUE_PIN, wifiConnected ? HIGH : LOW);
