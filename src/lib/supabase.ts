@@ -43,6 +43,29 @@ export const getRecentReadings = async (minutes: number = 60): Promise<PigletRea
   return data || [];
 };
 
+export const getReadingsBetween = async (params: {
+  fromIso: string;
+  toIso: string;
+  limit?: number;
+}): Promise<PigletReading[]> => {
+  const { fromIso, toIso, limit = 1000 } = params;
+
+  const { data, error } = await supabase
+    .from('piglet_readings')
+    .select('*')
+    .gte('created_at', fromIso)
+    .lte('created_at', toIso)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    console.error('Error fetching readings between dates:', error);
+    return [];
+  }
+
+  return data || [];
+};
+
 export const subscribeToReadings = (
   callback: (reading: PigletReading, event: 'INSERT' | 'UPDATE') => void
 ) => {

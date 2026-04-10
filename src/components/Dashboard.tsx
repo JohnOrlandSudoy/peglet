@@ -17,6 +17,7 @@ import { RelayControl } from './RelayControl';
 import { Charts } from './Charts';
 import { AIAnalysis } from './AIAnalysis';
 import { VisualMonitoring } from './VisualMonitoring';
+import { HistoryBrowser } from './HistoryBrowser';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Thermometer, Droplets, Wind, Gauge, Activity, CircleAlert as AlertCircle, WifiOff, Wifi } from 'lucide-react';
@@ -413,6 +414,8 @@ export const Dashboard = () => {
           </div>
 
           <VisualMonitoring reading={latestReading} />
+
+          <HistoryBrowser />
 
           {recentReadings.length > 0 && <Charts readings={recentReadings} />}
         </div>
