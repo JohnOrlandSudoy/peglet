@@ -130,3 +130,61 @@ export const setSpareRelayCommand = async (value: boolean) => {
     throw error;
   }
 };
+
+export const getSpareRelayCommand = async (deviceId: string = 'default'): Promise<boolean | null> => {
+  const { data, error } = await supabase
+    .from('relay_commands')
+    .select('spare_relay_on')
+    .eq('device_id', deviceId)
+    .maybeSingle();
+
+  if (error) {
+    console.error('Error fetching relay command:', error);
+    return null;
+  }
+
+  return data?.spare_relay_on ?? null;
+};
+
+export const subscribeToRelayCommands = (
+  callback: (next: { device_id: string; spare_relay_on: boolean; updated_at: string }, event: 'INSERT' | 'UPDATE') => void,
+  deviceId: string = 'default'
+) => {
+  const channel = supabase
+    .channel(`relay_commands_changes_${deviceId}`)
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'relay_commands',
+        filter: `device_id=eq.${deviceId}`
+      },
+      (payload) => {
+        callback(
+          payload.new as { device_id: string; spare_relay_on: boolean; updated_at: string },
+          payload.eventType as 'INSERT'
+        );
+      }
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'relay_commands',
+        filter: `device_id=eq.${deviceId}`
+      },
+      (payload) => {
+        callback(
+          payload.new as { device_id: string; spare_relay_on: boolean; updated_at: string },
+          payload.eventType as 'UPDATE'
+        );
+      }
+    )
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
+};

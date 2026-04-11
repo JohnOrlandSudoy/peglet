@@ -6,16 +6,20 @@ import { Fan, Droplets, Power, CircleAlert as AlertCircle } from 'lucide-react';
 interface RelayControlProps {
   coolingFan: boolean;
   waterPump: boolean;
-  spareRelay: boolean;
+  spareRelayRequested: boolean;
+  spareRelayActual: boolean;
+  spareRelayPending: boolean;
   heaterFan?: boolean;
   ammoniaLevel: number;
-  onToggleSpareRelay: () => void;
+  onToggleSpareRelay: (next: boolean) => void;
 }
 
 export const RelayControl = ({
   coolingFan,
   waterPump,
-  spareRelay,
+  spareRelayRequested,
+  spareRelayActual,
+  spareRelayPending,
   heaterFan,
   ammoniaLevel,
   onToggleSpareRelay
@@ -92,18 +96,39 @@ export const RelayControl = ({
 
         <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg">
           <div className="flex items-center gap-3">
-            <div className={`p-2 rounded-lg ${spareRelay ? 'bg-purple-500/10' : 'bg-gray-500/10'}`}>
-              <Power className={`w-5 h-5 ${spareRelay ? 'text-purple-500' : 'text-gray-500'}`} />
+            <div className={`p-2 rounded-lg ${spareRelayActual ? 'bg-purple-500/10' : 'bg-gray-500/10'}`}>
+              <Power className={`w-5 h-5 ${spareRelayActual ? 'text-purple-500' : 'text-gray-500'}`} />
             </div>
             <div>
               <p className="font-semibold">Spare Relay</p>
-              <p className="text-xs text-muted-foreground">Manual Control</p>
+              <p className="text-xs text-muted-foreground">
+                Manual Control{spareRelayPending ? ' • syncing…' : ''}
+              </p>
             </div>
           </div>
-          <Switch
-            checked={spareRelay}
-            onCheckedChange={onToggleSpareRelay}
-          />
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <Badge variant={spareRelayRequested ? 'default' : 'secondary'}>
+                REQ {spareRelayRequested ? 'ON' : 'OFF'}
+              </Badge>
+              <Badge
+                variant={spareRelayActual ? 'default' : 'secondary'}
+                className={spareRelayPending ? 'opacity-70' : undefined}
+              >
+                ACT {spareRelayActual ? 'ON' : 'OFF'}
+              </Badge>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-muted-foreground w-8 text-right">
+                {spareRelayRequested ? 'ON' : 'OFF'}
+              </span>
+              <Switch
+                checked={spareRelayRequested}
+                disabled={spareRelayPending}
+                onCheckedChange={onToggleSpareRelay}
+              />
+            </div>
+          </div>
         </div>
 
         <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg">

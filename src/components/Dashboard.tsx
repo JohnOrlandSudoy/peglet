@@ -4,7 +4,9 @@ import {
   getLatestReading,
   getRecentReadings,
   subscribeToReadings,
-  setSpareRelayCommand
+  setSpareRelayCommand,
+  getSpareRelayCommand,
+  subscribeToRelayCommands
 } from '@/lib/supabase';
 import {
   getCoreTemperatureStatus,
@@ -31,6 +33,8 @@ export const Dashboard = () => {
   const [now, setNow] = useState(() => new Date());
   const [initialLoadState, setInitialLoadState] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
   const [initialLoadError, setInitialLoadError] = useState<string | null>(null);
+  const [spareRelayRequested, setSpareRelayRequested] = useState<boolean | null>(null);
+  const [spareRelayPending, setSpareRelayPending] = useState(false);
   const latestReadingRef = useRef<PigletReading | null>(null);
   const secondsSinceUpdate = lastUpdated ? Math.max(0, Math.floor((now.getTime() - lastUpdated.getTime()) / 1000)) : null;
   const isStale = secondsSinceUpdate !== null ? secondsSinceUpdate > 30 : true;
@@ -136,6 +140,9 @@ export const Dashboard = () => {
           setLastUpdated(null);
           setInitialLoadState('empty');
         }
+
+        const command = await getSpareRelayCommand('default');
+        if (!cancelled) setSpareRelayRequested(command);
       } catch (err) {
         if (cancelled) return;
         setInitialLoadError(err instanceof Error ? err.message : 'Failed to load data');
@@ -211,24 +218,43 @@ export const Dashboard = () => {
       }
     });
 
+    const unsubscribeRelayCommands = subscribeToRelayCommands((next) => {
+      setSpareRelayRequested(next.spare_relay_on);
+    }, 'default');
+
     return () => {
       cancelled = true;
       unsubscribe();
+      unsubscribeRelayCommands();
       clearInterval(clock);
     };
   }, []);
 
-  const handleToggleSpareRelay = async () => {
+  useEffect(() => {
+    if (!latestReading) return;
+    if (spareRelayRequested === null) return;
+    if (!spareRelayPending) return;
+    if (latestReading.spare_relay_status === spareRelayRequested) {
+      setSpareRelayPending(false);
+    }
+  }, [latestReading, spareRelayPending, spareRelayRequested]);
+
+  const handleToggleSpareRelay = async (next: boolean) => {
     if (!latestReading) return;
 
+    const previousRequested = spareRelayRequested ?? latestReading.spare_relay_status;
+    setSpareRelayRequested(next);
+    setSpareRelayPending(true);
+
     try {
-      const newStatus = !latestReading.spare_relay_status;
-      await setSpareRelayCommand(newStatus);
+      await setSpareRelayCommand(next);
 
       toast.success('Spare Relay Updated', {
-        description: `Requested: ${newStatus ? 'ON' : 'OFF'} (ESP32 will apply on next sync)`
+        description: `Requested: ${next ? 'ON' : 'OFF'} (ESP32 will apply on next sync)`
       });
     } catch {
+      setSpareRelayRequested(previousRequested);
+      setSpareRelayPending(false);
       toast.error('Failed to send spare relay command');
     }
   };
@@ -402,7 +428,9 @@ export const Dashboard = () => {
               <RelayControl
                 coolingFan={latestReading.cooling_fan_status}
                 waterPump={latestReading.water_pump_status}
-                spareRelay={latestReading.spare_relay_status}
+                spareRelayRequested={spareRelayRequested ?? latestReading.spare_relay_status}
+                spareRelayActual={latestReading.spare_relay_status}
+                spareRelayPending={spareRelayPending && spareRelayRequested !== null && latestReading.spare_relay_status !== spareRelayRequested}
                 heaterFan={latestReading.heater_fan_status ?? false}
                 ammoniaLevel={Number(latestReading.ammonia_ppm)}
                 onToggleSpareRelay={handleToggleSpareRelay}
