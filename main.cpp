@@ -32,6 +32,7 @@ const char* password = "1234567890";
 static const char* supabaseHost = "ipaonuxlvyjtfldjdpyb.supabase.co";
 static const char* supabasePath = "/rest/v1/piglet_readings";
 static const char* relayCommandsPath = "/rest/v1/relay_commands?device_id=eq.default&select=spare_relay_on,updated_at";
+static const char* pushAlertPath = "/functions/v1/send_push_alert";
 const char* supabaseKey =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlwYW9udXhsdnlqdGZsZGpkcHliIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU1ODA3MzcsImV4cCI6MjA5MTE1NjczN30.E9ml7x_qOjAszq_5kkD0JjH6ZHbz86uqmHs8lNOYYOw";
 
@@ -61,6 +62,25 @@ static unsigned long buzzerNextAllowedAt = 0;
 static bool buzzerActive = false;
 
 static const unsigned long SEND_INTERVAL_MS = 2000;
+static const unsigned long ALERT_COOLDOWN_MS = 180000;
+
+static bool alertCoolingOnLatched = false;
+static bool alertAmmonia11Latched = false;
+static bool alertAmmonia25Latched = false;
+static bool alertTempHighLatched = false;
+static bool alertTempLowLatched = false;
+
+static unsigned long lastAlertCoolingAt = 0;
+static unsigned long lastAlertAmmonia11At = 0;
+static unsigned long lastAlertAmmonia25At = 0;
+static unsigned long lastAlertTempHighAt = 0;
+static unsigned long lastAlertTempLowAt = 0;
+
+static void updateIndicators() {
+  bool wifiConnected = WiFi.status() == WL_CONNECTED;
+  digitalWrite(LED_BLUE_PIN, wifiConnected ? HIGH : LOW);
+  digitalWrite(LED_GREEN_PIN, (isSending || millis() < greenLedUntilMs) ? HIGH : LOW);
+}
 
 static const char* wifiStatusToString(wl_status_t s) {
   switch (s) {
@@ -276,7 +296,7 @@ static bool httpsGetJson(const char* path, int& statusCodeOut, String& responseB
   return true;
 }
 
-static bool httpsPostJson(const String& jsonPayload, int& statusCodeOut, String& responseBodyOut) {
+static bool httpsPostJsonPath(const char* path, const String& jsonPayload, int& statusCodeOut, String& responseBodyOut) {
   statusCodeOut = 0;
   responseBodyOut = "";
 
@@ -304,7 +324,7 @@ static bool httpsPostJson(const String& jsonPayload, int& statusCodeOut, String&
   Serial.println(millis() - startConnect);
 
   client.print("POST ");
-  client.print(supabasePath);
+  client.print(path);
   client.println(" HTTP/1.1");
   client.print("Host: ");
   client.println(supabaseHost);
@@ -357,6 +377,58 @@ static bool httpsPostJson(const String& jsonPayload, int& statusCodeOut, String&
   return true;
 }
 
+static bool httpsPostJson(const String& jsonPayload, int& statusCodeOut, String& responseBodyOut) {
+  return httpsPostJsonPath(supabasePath, jsonPayload, statusCodeOut, responseBodyOut);
+}
+
+static void sendPushAlert(const char* title, const char* message, const char* level, const char* category) {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  StaticJsonDocument<256> doc;
+  doc["title"] = title;
+  doc["message"] = message;
+  doc["level"] = level;
+  doc["category"] = category;
+
+  String json;
+  serializeJson(doc, json);
+
+  int code = 0;
+  String body;
+  bool ok = httpsPostJsonPath(pushAlertPath, json, code, body);
+  Serial.print("Push alert response: ");
+  Serial.println(code);
+  if (!ok) {
+    Serial.println("Push alert failed");
+  } else if (body.length() > 0) {
+    Serial.println(body);
+  }
+}
+
+static void maybeSendLatchedAlert(
+  bool condition,
+  bool& latched,
+  unsigned long& lastSentAt,
+  const char* title,
+  const char* message,
+  const char* level,
+  const char* category
+) {
+  if (!condition) {
+    latched = false;
+    return;
+  }
+  if (latched) return;
+  unsigned long now = millis();
+  if (lastSentAt != 0 && now - lastSentAt < ALERT_COOLDOWN_MS) {
+    latched = true;
+    return;
+  }
+  sendPushAlert(title, message, level, category);
+  lastSentAt = now;
+  latched = true;
+}
+
 static void pollRelayCommands() {
   if ((long)(millis() - nextRelayPollAt) < 0) return;
   nextRelayPollAt = millis() + 2000;
@@ -380,6 +452,7 @@ static void pollRelayCommands() {
 
 static void sendToSupabase(bool fanOn, bool pumpOn, bool spareOn, bool heaterOn) {
   isSending = true;
+  updateIndicators();
 
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("Supabase skipped: WiFi not connected");
@@ -388,6 +461,7 @@ static void sendToSupabase(bool fanOn, bool pumpOn, bool spareOn, bool heaterOn)
       buzzerNextAllowedAt = millis() + 1500;
     }
     isSending = false;
+    updateIndicators();
     return;
   }
 
@@ -421,12 +495,61 @@ static void sendToSupabase(bool fanOn, bool pumpOn, bool spareOn, bool heaterOn)
 
   if (ok && code >= 200 && code < 300) {
     setGreenLedPulse(350);
+    updateIndicators();
+
+    float tempForAlerts = hasCoreTemp ? coreTemp : ambientTemp;
+    maybeSendLatchedAlert(
+      fanOn,
+      alertCoolingOnLatched,
+      lastAlertCoolingAt,
+      "Cooling is ON",
+      "Siguraduhin na sarado ang room/kulungan para hindi sumingaw ang lamig (aircon/cooling).",
+      "info",
+      "cooling"
+    );
+    maybeSendLatchedAlert(
+      ammoniaPPM >= 25.0,
+      alertAmmonia25Latched,
+      lastAlertAmmonia25At,
+      "Hazardous Ammonia Level",
+      "NH3 is hazardous. Increase ventilation and check manure/bedding.",
+      "critical",
+      "ammonia"
+    );
+    maybeSendLatchedAlert(
+      ammoniaPPM >= 11.0 && ammoniaPPM < 25.0,
+      alertAmmonia11Latched,
+      lastAlertAmmonia11At,
+      "Harmful Ammonia Level",
+      "NH3 is high. Water pump should be AUTO ON (>= 11 ppm). Improve ventilation.",
+      "warning",
+      "ammonia"
+    );
+    maybeSendLatchedAlert(
+      tempForAlerts >= 40.0,
+      alertTempHighLatched,
+      lastAlertTempHighAt,
+      "Critical High Temperature",
+      "Possible fever/heat stress. Start cooling/ventilation and check piglets.",
+      "critical",
+      "temperature"
+    );
+    maybeSendLatchedAlert(
+      tempForAlerts > 0.0 && tempForAlerts < 34.0,
+      alertTempLowLatched,
+      lastAlertTempLowAt,
+      "Low Temperature",
+      "Hypothermia risk. Warm the piglets (bedding/heating) and monitor closely.",
+      "warning",
+      "temperature"
+    );
   } else if (millis() >= buzzerNextAllowedAt) {
     buzzerBeep(250, 1400);
     buzzerNextAllowedAt = millis() + 2000;
   }
 
   isSending = false;
+  updateIndicators();
 }
 
 void setup() {
@@ -439,6 +562,7 @@ void setup() {
   digitalWrite(LED_BLUE_PIN, LOW);
   digitalWrite(LED_GREEN_PIN, LOW);
   buzzerStop();
+  updateIndicators();
 
   pinMode(I2C_SDA, INPUT_PULLUP);
   pinMode(I2C_SCL, INPUT_PULLUP);
@@ -494,10 +618,7 @@ void setup() {
 void loop() {
   ensureWiFiConnected();
   pollRelayCommands();
-
-  bool wifiConnected = WiFi.status() == WL_CONNECTED;
-  digitalWrite(LED_BLUE_PIN, wifiConnected ? HIGH : LOW);
-  digitalWrite(LED_GREEN_PIN, isSending || millis() < greenLedUntilMs ? HIGH : LOW);
+  updateIndicators();
   if (buzzerActive && millis() >= buzzerUntilMs) {
     buzzerStop();
   }
@@ -615,15 +736,20 @@ void loop() {
     lastSend = millis();
   }
 
-  Serial.print("Core: ");
-  Serial.print(coreTemp, 2);
-  Serial.print("C | Ambient: ");
-  Serial.print(ambientTemp, 2);
-  Serial.print("C | Hum: ");
-  Serial.print(humidity, 1);
-  Serial.print("% | NH3: ");
-  Serial.print(ammoniaPPM, 1);
-  Serial.println(" ppm");
+  static unsigned long lastPrintAt = 0;
+  if (millis() - lastPrintAt >= 2000) {
+    lastPrintAt = millis();
+    Serial.print("Core: ");
+    Serial.print(coreTemp, 2);
+    Serial.print("C | Ambient: ");
+    Serial.print(ambientTemp, 2);
+    Serial.print("C | Hum: ");
+    Serial.print(humidity, 1);
+    Serial.print("% | NH3: ");
+    Serial.print(ammoniaPPM, 1);
+    Serial.println(" ppm");
+  }
 
-  delay(2000);
+  updateIndicators();
+  delay(20);
 }

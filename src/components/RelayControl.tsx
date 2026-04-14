@@ -36,7 +36,7 @@ export const RelayControl = ({
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between p-4 bg-muted/50 rounded-lg">
           <div className="flex items-center gap-3">
             <div className={`p-2 rounded-lg ${coolingFan ? 'bg-blue-500/10' : 'bg-gray-500/10'}`}>
               <Fan className={`w-5 h-5 ${coolingFan ? 'text-blue-500 animate-spin' : 'text-gray-500'}`} />
@@ -46,12 +46,12 @@ export const RelayControl = ({
               <p className="text-xs text-muted-foreground">Temperature Control</p>
             </div>
           </div>
-          <Badge variant={coolingFan ? 'default' : 'secondary'}>
-            {coolingFan ? 'ON' : 'OFF'}
-          </Badge>
+          <div className="flex justify-end">
+            <Badge variant={coolingFan ? 'default' : 'secondary'}>{coolingFan ? 'ON' : 'OFF'}</Badge>
+          </div>
         </div>
 
-        <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between p-4 bg-muted/50 rounded-lg">
           <div className="flex items-center gap-3">
             <div className={`p-2 rounded-lg ${waterPump ? 'bg-cyan-500/10' : 'bg-gray-500/10'}`}>
               <Droplets className={`w-5 h-5 ${waterPump ? 'text-cyan-500' : 'text-gray-500'}`} />
@@ -63,7 +63,7 @@ export const RelayControl = ({
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             {isWaterPumpAutoOn && (
               <AlertCircle className="w-4 h-4 text-orange-500" />
             )}
@@ -94,7 +94,7 @@ export const RelayControl = ({
           </div>
         )}
 
-        <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between p-4 bg-muted/50 rounded-lg">
           <div className="flex items-center gap-3">
             <div className={`p-2 rounded-lg ${spareRelayActual ? 'bg-purple-500/10' : 'bg-gray-500/10'}`}>
               <Power className={`w-5 h-5 ${spareRelayActual ? 'text-purple-500' : 'text-gray-500'}`} />
@@ -106,8 +106,8 @@ export const RelayControl = ({
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
+          <div className="flex flex-col items-end gap-2 sm:flex-row sm:items-center sm:gap-3">
+            <div className="flex flex-wrap items-center justify-end gap-2">
               <Badge variant={spareRelayRequested ? 'default' : 'secondary'}>
                 REQ {spareRelayRequested ? 'ON' : 'OFF'}
               </Badge>
@@ -131,7 +131,7 @@ export const RelayControl = ({
           </div>
         </div>
 
-        <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between p-4 bg-muted/50 rounded-lg">
           <div className="flex items-center gap-3">
             <div className={`p-2 rounded-lg ${heaterFan ? 'bg-amber-500/10' : 'bg-gray-500/10'}`}>
               <Fan className={`w-5 h-5 ${heaterFan ? 'text-amber-500' : 'text-gray-500'}`} />
@@ -141,9 +141,9 @@ export const RelayControl = ({
               <p className="text-xs text-muted-foreground">Cold Weather Support</p>
             </div>
           </div>
-          <Badge variant={heaterFan ? 'default' : 'secondary'}>
-            {heaterFan ? 'ON' : 'OFF'}
-          </Badge>
+          <div className="flex justify-end">
+            <Badge variant={heaterFan ? 'default' : 'secondary'}>{heaterFan ? 'ON' : 'OFF'}</Badge>
+          </div>
         </div>
       </CardContent>
     </Card>

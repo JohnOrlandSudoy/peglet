@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -36,6 +36,15 @@ export const HistoryBrowser = () => {
   const [toTime, setToTime] = useState(() => toDatetimeLocalValue(new Date()));
   const [rows, setRows] = useState<PigletReading[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [calendarMonths, setCalendarMonths] = useState(1);
+
+  useEffect(() => {
+    const media = window.matchMedia('(min-width: 768px)');
+    const applyValue = () => setCalendarMonths(media.matches ? 2 : 1);
+    applyValue();
+    media.addEventListener('change', applyValue);
+    return () => media.removeEventListener('change', applyValue);
+  }, []);
 
   const resolvedFrom = useMemo(() => {
     const dt = parseDatetimeLocal(fromTime);
@@ -99,8 +108,8 @@ export const HistoryBrowser = () => {
                     : 'Pick date range'}
                 </Button>
               </PopoverTrigger>
-              <PopoverContent className="w-auto p-0" align="start">
-                <Calendar mode="range" selected={range} onSelect={pickRange} numberOfMonths={2} />
+              <PopoverContent className="w-auto max-w-[calc(100vw-2rem)] p-0" align="start">
+                <Calendar mode="range" selected={range} onSelect={pickRange} numberOfMonths={calendarMonths} />
               </PopoverContent>
             </Popover>
           </div>

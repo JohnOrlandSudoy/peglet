@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PigletReading } from '@/types';
 import {
   getLatestReading,
@@ -22,8 +22,26 @@ import { VisualMonitoring } from './VisualMonitoring';
 import { HistoryBrowser } from './HistoryBrowser';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Thermometer, Droplets, Wind, Gauge, Activity, CircleAlert as AlertCircle, WifiOff, Wifi } from 'lucide-react';
+import {
+  Thermometer,
+  Droplets,
+  Wind,
+  Gauge,
+  Activity,
+  CircleAlert as AlertCircle,
+  WifiOff,
+  Wifi,
+  Bell,
+  Loader as Loader2
+} from 'lucide-react';
 import { toast } from 'sonner';
+
+declare global {
+  interface Window {
+    OneSignalDeferred?: Array<(OneSignal: unknown) => void>;
+    __pegletOneSignalInitPromise?: Promise<void>;
+  }
+}
 
 export const Dashboard = () => {
   const [latestReading, setLatestReading] = useState<PigletReading | null>(null);
@@ -35,11 +53,178 @@ export const Dashboard = () => {
   const [initialLoadError, setInitialLoadError] = useState<string | null>(null);
   const [spareRelayRequested, setSpareRelayRequested] = useState<boolean | null>(null);
   const [spareRelayPending, setSpareRelayPending] = useState(false);
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>(() => {
+    if (typeof Notification === 'undefined') return 'denied';
+    return Notification.permission;
+  });
+  const [isEnablingNotifications, setIsEnablingNotifications] = useState(false);
+  const [bannerDismissals, setBannerDismissals] = useState<Record<string, { dismissed: boolean; activeSince: string }>>(() => {
+    if (typeof window === 'undefined') return {};
+    try {
+      const raw = window.localStorage.getItem('peglet_banner_dismissals_v1');
+      if (!raw) return {};
+      const parsed = JSON.parse(raw) as Record<string, { dismissed?: unknown; activeSince?: unknown }>;
+      const next: Record<string, { dismissed: boolean; activeSince: string }> = {};
+      for (const [key, value] of Object.entries(parsed)) {
+        const dismissed = Boolean(value?.dismissed);
+        const activeSince = typeof value?.activeSince === 'string' ? value.activeSince : '';
+        if (activeSince.length > 0) next[key] = { dismissed, activeSince };
+      }
+      return next;
+    } catch {
+      return {};
+    }
+  });
   const latestReadingRef = useRef<PigletReading | null>(null);
   const secondsSinceUpdate = lastUpdated ? Math.max(0, Math.floor((now.getTime() - lastUpdated.getTime()) / 1000)) : null;
   const isStale = secondsSinceUpdate !== null ? secondsSinceUpdate > 30 : true;
 
-  const banners = useMemo(() => {
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem('peglet_banner_dismissals_v1', JSON.stringify(bannerDismissals));
+    } catch {
+      return;
+    }
+  }, [bannerDismissals]);
+
+  useEffect(() => {
+    const update = () => {
+      if (typeof Notification === 'undefined') return;
+      setNotificationPermission(Notification.permission);
+    };
+    update();
+    window.addEventListener('focus', update);
+    document.addEventListener('visibilitychange', update);
+    return () => {
+      window.removeEventListener('focus', update);
+      document.removeEventListener('visibilitychange', update);
+    };
+  }, []);
+
+  const enableNotifications = async () => {
+    if (typeof window === 'undefined') return;
+    if (typeof Notification === 'undefined') {
+      toast.error('Notifications not supported on this device/browser');
+      return;
+    }
+
+    const appId: string | undefined = import.meta.env.VITE_ONESIGNAL_APP_ID;
+    if (!appId) {
+      toast.error('Missing OneSignal App ID (VITE_ONESIGNAL_APP_ID)');
+      return;
+    }
+
+    const isSecure = window.isSecureContext || window.location.hostname === 'localhost';
+    if (!isSecure) {
+      toast.error('Push notifications require HTTPS');
+      return;
+    }
+
+    setIsEnablingNotifications(true);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const existing = document.querySelector('script[data-onesignal="true"]') as HTMLScriptElement | null;
+        if (existing) {
+          resolve();
+          return;
+        }
+        const script = document.createElement('script');
+        script.src = 'https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js';
+        script.defer = true;
+        script.dataset.onesignal = 'true';
+        script.onload = () => resolve();
+        script.onerror = () => reject(new Error('Failed to load OneSignal SDK'));
+        document.head.appendChild(script);
+      });
+
+      window.OneSignalDeferred = window.OneSignalDeferred || [];
+
+      if (!window.__pegletOneSignalInitPromise) {
+        window.__pegletOneSignalInitPromise = new Promise<void>((resolve, reject) => {
+          window.OneSignalDeferred!.push(async (OneSignal) => {
+            try {
+              const os = OneSignal as {
+                init: (options: Record<string, unknown>) => Promise<void>;
+                Debug: { setLogLevel: (level: string) => void };
+              };
+              os.Debug.setLogLevel('warn');
+              await os.init({
+                appId,
+                serviceWorkerPath: '/OneSignalSDKWorker.js',
+                serviceWorkerUpdaterPath: '/OneSignalSDKUpdaterWorker.js',
+                allowLocalhostAsSecureOrigin: true,
+                welcomeNotification: { disable: true }
+              });
+              resolve();
+            } catch (err) {
+              reject(err);
+            }
+          });
+        });
+      }
+
+      await window.__pegletOneSignalInitPromise;
+
+      await new Promise<void>((resolve, reject) => {
+        window.OneSignalDeferred!.push(async (OneSignal) => {
+          try {
+            const os = OneSignal as {
+              Notifications: {
+                isPushSupported: () => boolean;
+                requestPermission: () => Promise<void> | void;
+                permission: boolean;
+                setDefaultTitle: (title: string) => void;
+                setDefaultUrl: (url: string) => void;
+              };
+              User: {
+                PushSubscription: {
+                  optIn: () => Promise<void> | void;
+                  optedIn: boolean;
+                };
+              };
+            };
+
+            if (!os.Notifications.isPushSupported()) {
+              toast.error('Push not supported on this device/browser');
+              resolve();
+              return;
+            }
+
+            await os.Notifications.requestPermission();
+            await os.User.PushSubscription.optIn();
+            os.Notifications.setDefaultTitle('Smart Piglet Health Monitor');
+            os.Notifications.setDefaultUrl(window.location.origin);
+
+            if (os.Notifications.permission && os.User.PushSubscription.optedIn) {
+              toast.success('Notifications enabled', {
+                description: 'Makaka-receive ka na ng alerts kahit sarado ang web app (basta may internet).'
+              });
+            } else if (Notification.permission === 'denied') {
+              toast.error('Notifications blocked', {
+                description: 'I-enable sa browser/site settings para gumana ulit.'
+              });
+            } else {
+              toast.message('Notifications not enabled yet');
+            }
+
+            setNotificationPermission(Notification.permission);
+            resolve();
+          } catch (err) {
+            reject(err);
+          }
+        });
+      });
+    } catch (err) {
+      toast.error('Failed to enable notifications', {
+        description: err instanceof Error ? err.message : 'Unknown error'
+      });
+    } finally {
+      setIsEnablingNotifications(false);
+    }
+  };
+
+  const activeBanners = useMemo(() => {
     if (!latestReading) return [];
 
     const items: Array<{
@@ -48,6 +233,7 @@ export const Dashboard = () => {
       title: string;
       description: string;
       className: string;
+      accentClassName?: string;
     }> = [];
 
     if (isStale) {
@@ -56,7 +242,20 @@ export const Dashboard = () => {
         tone: 'info',
         title: 'No recent data',
         description: 'Walang bagong readings. Check WiFi/ESP32 power at Supabase connection.',
-        className: 'bg-muted/50 border border-border'
+        className: 'bg-muted/50 border border-border',
+        accentClassName: 'text-muted-foreground'
+      });
+    }
+
+    if (latestReading.cooling_fan_status) {
+      items.push({
+        key: 'cooling-on',
+        tone: 'info',
+        title: 'Cooling is ON',
+        description: 'Siguraduhin na sarado ang room/kulungan para hindi sumingaw ang lamig (aircon/cooling).',
+        className:
+          'bg-gradient-to-r from-blue-500/15 to-cyan-500/10 border-2 border-blue-500 ring-2 ring-blue-500/30 shadow-lg animate-pulse',
+        accentClassName: 'text-blue-500'
       });
     }
 
@@ -100,6 +299,46 @@ export const Dashboard = () => {
 
     return items;
   }, [isStale, latestReading]);
+
+  useEffect(() => {
+    if (!latestReading) return;
+    setBannerDismissals((prev) => {
+      const activeKeys = new Set(activeBanners.map((b) => b.key));
+      let changed = false;
+      const next: Record<string, { dismissed: boolean; activeSince: string }> = { ...prev };
+
+      for (const key of Object.keys(next)) {
+        if (!activeKeys.has(key)) {
+          delete next[key];
+          changed = true;
+        }
+      }
+
+      for (const key of activeKeys) {
+        if (!next[key]) {
+          next[key] = { dismissed: false, activeSince: latestReading.created_at };
+          changed = true;
+        }
+      }
+
+      return changed ? next : prev;
+    });
+  }, [activeBanners, latestReading]);
+
+  const dismissBanner = useCallback(
+    (key: string) => {
+      setBannerDismissals((prev) => {
+        const activeSince = prev[key]?.activeSince ?? latestReading?.created_at ?? new Date().toISOString();
+        return { ...prev, [key]: { dismissed: true, activeSince } };
+      });
+    },
+    [latestReading]
+  );
+
+  const banners = useMemo(
+    () => activeBanners.filter((b) => !bannerDismissals[b.key]?.dismissed),
+    [activeBanners, bannerDismissals]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -186,8 +425,10 @@ export const Dashboard = () => {
       if (event === 'INSERT') {
         const prevAmmonia = prev ? Number(prev.ammonia_ppm) : null;
         const prevCoreTemp = prev ? Number(prev.core_temperature) : null;
+        const prevCooling = prev ? Boolean(prev.cooling_fan_status) : null;
         const nextAmmonia = Number(incoming.ammonia_ppm);
         const nextCoreTemp = Number(incoming.core_temperature);
+        const nextCooling = Boolean(incoming.cooling_fan_status);
 
         if ((prevAmmonia === null || prevAmmonia < 11) && nextAmmonia >= 11) {
           toast.warning('Ammonia Alert: Water Pump AUTO ON', {
@@ -210,6 +451,12 @@ export const Dashboard = () => {
         if ((prevCoreTemp === null || prevCoreTemp < 40) && nextCoreTemp >= 40) {
           toast.error('Critical Temperature Alert!', {
             description: `Core temp: ${nextCoreTemp.toFixed(1)}°C — check piglets immediately`
+          });
+        }
+
+        if ((prevCooling === null || prevCooling === false) && nextCooling) {
+          toast.message('Cooling is ON', {
+            description: 'Isara ang room/kulungan para hindi sumingaw ang lamig (aircon/cooling).'
           });
         }
 
@@ -332,18 +579,38 @@ export const Dashboard = () => {
       <header className="border-b bg-card sticky top-0 z-50 backdrop-blur-lg bg-opacity-80">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 min-w-0">
               <div className="p-2 bg-gradient-to-br from-green-500 to-emerald-600 rounded-lg">
                 <Activity className="w-6 h-6 text-white" />
               </div>
-              <div>
-                <h1 className="text-2xl font-bold bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text text-transparent">
+              <div className="min-w-0">
+                <h1 className="text-xl sm:text-2xl font-bold bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text text-transparent truncate">
                   Smart Piglet Health Monitor
                 </h1>
                 <p className="text-sm text-muted-foreground">Real-time IoT Monitoring System</p>
               </div>
             </div>
             <div className="flex items-center gap-3">
+              <Button
+                variant={notificationPermission === 'granted' ? 'secondary' : 'outline'}
+                size="sm"
+                onClick={() => void enableNotifications()}
+                disabled={isEnablingNotifications}
+                className="gap-2"
+              >
+                {isEnablingNotifications ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Bell className="w-4 h-4" />
+                )}
+                <span className="hidden sm:inline">
+                  {notificationPermission === 'granted'
+                    ? 'Alerts On'
+                    : notificationPermission === 'denied'
+                      ? 'Alerts Blocked'
+                      : 'Enable Alerts'}
+                </span>
+              </Button>
               {isLive && (
                 <Badge variant="default" className="bg-red-500 animate-pulse">
                   <span className="w-2 h-2 bg-white rounded-full mr-2" />
@@ -373,22 +640,35 @@ export const Dashboard = () => {
       <main className="container mx-auto px-4 py-8">
         <div className="space-y-8">
           {banners.map((b) => (
-            <div key={b.key} className={`${b.className} rounded-lg p-4 flex items-start gap-3`}>
+            <div
+              key={b.key}
+              className={`${b.className} rounded-lg p-4 flex flex-col sm:flex-row sm:items-start gap-3`}
+            >
               <AlertCircle
                 className={`w-6 h-6 flex-shrink-0 mt-0.5 ${
-                  b.tone === 'critical' ? 'text-red-500' : b.tone === 'warning' ? 'text-orange-500' : 'text-muted-foreground'
+                  b.accentClassName ??
+                  (b.tone === 'critical' ? 'text-red-500' : b.tone === 'warning' ? 'text-orange-500' : 'text-blue-500')
                 }`}
               />
-              <div>
+              <div className="flex-1">
                 <h3
                   className={`font-bold text-lg ${
-                    b.tone === 'critical' ? 'text-red-500' : b.tone === 'warning' ? 'text-orange-500' : 'text-foreground'
+                    b.accentClassName ??
+                    (b.tone === 'critical' ? 'text-red-500' : b.tone === 'warning' ? 'text-orange-500' : 'text-blue-500')
                   }`}
                 >
                   {b.title}
                 </h3>
                 <p className="text-sm text-muted-foreground mt-1">{b.description}</p>
               </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => dismissBanner(b.key)}
+                className="self-start sm:self-center"
+              >
+                OK
+              </Button>
             </div>
           ))}
 
