@@ -132,6 +132,14 @@ button:focus-visible {
     @apply border-border;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground min-h-screen;
+    margin: 0;
+    display: block;
+    min-width: 0;
   }
+}
+
+#root {
+  min-height: 100vh;
+  width: 100%;
 }
