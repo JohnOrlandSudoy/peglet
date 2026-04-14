@@ -216,8 +216,15 @@ export const Dashboard = () => {
         });
       });
     } catch (err) {
+      const rawMessage = err instanceof Error ? err.message : 'Unknown error';
+      if (rawMessage.toLowerCase().includes('not configure') && rawMessage.toLowerCase().includes('web push')) {
+        toast.error('App not configured for Web Push', {
+          description: `Check OneSignal Web Settings “Site URL” matches this site: ${window.location.origin} (use your production domain, not localhost/vercel preview).`
+        });
+        return;
+      }
       toast.error('Failed to enable notifications', {
-        description: err instanceof Error ? err.message : 'Unknown error'
+        description: rawMessage
       });
     } finally {
       setIsEnablingNotifications(false);
