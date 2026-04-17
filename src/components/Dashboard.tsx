@@ -58,6 +58,39 @@ export const Dashboard = () => {
     return Notification.permission;
   });
   const [isEnablingNotifications, setIsEnablingNotifications] = useState(false);
+  const [isStandalone, setIsStandalone] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const checkStandalone = () => {
+      const standalone = window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone === true;
+      setIsStandalone(standalone);
+    };
+    checkStandalone();
+    window.addEventListener('appinstalled', () => {
+      toast.success('App Installed!', {
+        description: 'Successfully added to home screen. Open it from your apps for a better experience.'
+      });
+      setIsStandalone(true);
+    });
+  }, []);
+
+  useEffect(() => {
+    // If standalone but notifications not enabled, prompt automatically after a short delay
+    if (isStandalone && notificationPermission === 'default') {
+      const timer = setTimeout(() => {
+        toast.message('Enable Alerts?', {
+          description: 'Gusto mo bang makatanggap ng alerts kahit sarado ang app?',
+          action: {
+            label: 'Enable',
+            onClick: () => void enableNotifications()
+          }
+        });
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [isStandalone, notificationPermission]);
+
   const [bannerDismissals, setBannerDismissals] = useState<Record<string, { dismissed: boolean; activeSince: string }>>(() => {
     if (typeof window === 'undefined') return {};
     try {
@@ -102,26 +135,27 @@ export const Dashboard = () => {
     };
   }, []);
 
-  const enableNotifications = async () => {
+  const enableNotifications = async (silent: boolean = false) => {
     if (typeof window === 'undefined') return;
     if (typeof Notification === 'undefined') {
-      toast.error('Notifications not supported on this device/browser');
+      if (!silent) toast.error('Notifications not supported on this device/browser');
       return;
     }
 
     const appId: string | undefined = import.meta.env.VITE_ONESIGNAL_APP_ID;
+    const safariWebId: string | undefined = import.meta.env.VITE_ONESIGNAL_SAFARI_WEB_ID;
     if (!appId) {
-      toast.error('Missing OneSignal App ID (VITE_ONESIGNAL_APP_ID)');
+      if (!silent) toast.error('Missing OneSignal App ID (VITE_ONESIGNAL_APP_ID)');
       return;
     }
 
     const isSecure = window.isSecureContext || window.location.hostname === 'localhost';
     if (!isSecure) {
-      toast.error('Push notifications require HTTPS');
+      if (!silent) toast.error('Push notifications require HTTPS');
       return;
     }
 
-    setIsEnablingNotifications(true);
+    if (!silent) setIsEnablingNotifications(true);
     try {
       await new Promise<void>((resolve, reject) => {
         const existing = document.querySelector('script[data-onesignal="true"]') as HTMLScriptElement | null;
@@ -151,6 +185,10 @@ export const Dashboard = () => {
               os.Debug.setLogLevel('warn');
               await os.init({
                 appId,
+                safari_web_id: safariWebId,
+                notifyButton: {
+                  enable: true,
+                },
                 serviceWorkerPath: '/OneSignalSDKWorker.js',
                 serviceWorkerUpdaterPath: '/OneSignalSDKUpdaterWorker.js',
                 allowLocalhostAsSecureOrigin: true,
@@ -186,26 +224,33 @@ export const Dashboard = () => {
             };
 
             if (!os.Notifications.isPushSupported()) {
-              toast.error('Push not supported on this device/browser');
+              if (!silent) toast.error('Push not supported on this device/browser');
               resolve();
               return;
             }
 
-            await os.Notifications.requestPermission();
-            await os.User.PushSubscription.optIn();
+            if (!silent) {
+              await os.Notifications.requestPermission();
+              await os.User.PushSubscription.optIn();
+            }
+            
             os.Notifications.setDefaultTitle('Smart Piglet Health Monitor');
             os.Notifications.setDefaultUrl(window.location.origin);
 
             if (os.Notifications.permission && os.User.PushSubscription.optedIn) {
-              toast.success('Notifications enabled', {
-                description: 'Makaka-receive ka na ng alerts kahit sarado ang web app (basta may internet).'
-              });
+              if (!silent) {
+                toast.success('Notifications enabled', {
+                  description: 'Makaka-receive ka na ng alerts kahit sarado ang web app (basta may internet).'
+                });
+              }
             } else if (Notification.permission === 'denied') {
-              toast.error('Notifications blocked', {
-                description: 'I-enable sa browser/site settings para gumana ulit.'
-              });
+              if (!silent) {
+                toast.error('Notifications blocked', {
+                  description: 'I-enable sa browser/site settings para gumana ulit.'
+                });
+              }
             } else {
-              toast.message('Notifications not enabled yet');
+              if (!silent) toast.message('Notifications not enabled yet');
             }
 
             setNotificationPermission(Notification.permission);
@@ -218,18 +263,29 @@ export const Dashboard = () => {
     } catch (err) {
       const rawMessage = err instanceof Error ? err.message : 'Unknown error';
       if (rawMessage.toLowerCase().includes('not configure') && rawMessage.toLowerCase().includes('web push')) {
-        toast.error('App not configured for Web Push', {
-          description: `Check OneSignal Web Settings “Site URL” matches this site: ${window.location.origin} (use your production domain, not localhost/vercel preview).`
-        });
+        if (!silent) {
+          toast.error('App not configured for Web Push', {
+            description: `Check OneSignal Web Settings “Site URL” matches this site: ${window.location.origin} (use your production domain, not localhost/vercel preview).`
+          });
+        }
         return;
       }
-      toast.error('Failed to enable notifications', {
-        description: rawMessage
-      });
+      if (!silent) {
+        toast.error('Failed to enable notifications', {
+          description: rawMessage
+        });
+      }
     } finally {
-      setIsEnablingNotifications(false);
+      if (!silent) setIsEnablingNotifications(false);
     }
   };
+
+  useEffect(() => {
+    // If permission already granted, initialize OneSignal silently on load
+    if (Notification.permission === 'granted') {
+      void enableNotifications(true);
+    }
+  }, []);
 
   const activeBanners = useMemo(() => {
     if (!latestReading) return [];
