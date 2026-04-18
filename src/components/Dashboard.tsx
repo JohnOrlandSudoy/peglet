@@ -189,8 +189,6 @@ export const Dashboard = () => {
                 notifyButton: {
                   enable: true,
                 },
-                serviceWorkerPath: '/OneSignalSDKWorker.js',
-                serviceWorkerUpdaterPath: '/OneSignalSDKUpdaterWorker.js',
                 allowLocalhostAsSecureOrigin: true,
                 welcomeNotification: { disable: true }
               });
