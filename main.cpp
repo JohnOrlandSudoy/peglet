@@ -63,6 +63,7 @@ static bool buzzerActive = false;
 
 static const unsigned long SEND_INTERVAL_MS = 2000;
 static const unsigned long ALERT_COOLDOWN_MS = 180000;
+static const unsigned long COOLING_REMINDER_MS = 3600000; // 1 hour reminder for cooling fan
 
 static bool alertCoolingOnLatched = false;
 static bool alertAmmonia11Latched = false;
@@ -429,6 +430,28 @@ static void maybeSendLatchedAlert(
   latched = true;
 }
 
+static void maybeSendReminderAlert(
+  bool condition,
+  unsigned long& lastSentAt,
+  unsigned long intervalMs,
+  const char* title,
+  const char* message,
+  const char* level,
+  const char* category
+) {
+  if (!condition) {
+    lastSentAt = 0;
+    return;
+  }
+
+  unsigned long now = millis();
+  // If first time turning on, send immediately. If already on, send if interval passed.
+  if (lastSentAt == 0 || (now - lastSentAt >= intervalMs)) {
+    sendPushAlert(title, message, level, category);
+    lastSentAt = now;
+  }
+}
+
 static void pollRelayCommands() {
   if ((long)(millis() - nextRelayPollAt) < 0) return;
   nextRelayPollAt = millis() + 2000;
@@ -498,12 +521,12 @@ static void sendToSupabase(bool fanOn, bool pumpOn, bool spareOn, bool heaterOn)
     updateIndicators();
 
     float tempForAlerts = hasCoreTemp ? coreTemp : ambientTemp;
-    maybeSendLatchedAlert(
+    maybeSendReminderAlert(
       fanOn,
-      alertCoolingOnLatched,
       lastAlertCoolingAt,
-      "Cooling is ON",
-      "Siguraduhin na sarado ang room/kulungan para hindi sumingaw ang lamig (aircon/cooling).",
+      COOLING_REMINDER_MS,
+      "Cooling is ON (Reminder)",
+      "Naka-ON pa rin ang cooling system. Siguraduhin na sarado ang room para hindi sumingaw ang lamig.",
       "info",
       "cooling"
     );
